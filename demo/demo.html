@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Monads test</title>          
+    </head>
+    <body>
+        <span style="font-size: 20px;">
+            press f12 and see the console output. There should be nothing but the word 'true'
+        </span>        
+        <script src="../src/monads_no_module.js"></script>        
+        <script>
+           const {Success, Fail, Just, Nothing, Effect, State, MonadError} = Monads
+            console.log("---INTROSPECTION METHODS---")
+            const [s1, f1, j1, n1] = [Success.of(1), Fail.of('Some err'), Just.of(1), Nothing.of()];
+            const [s2, f2, j2, n2] = [new Success(1), new Fail('Some err'), new Just(1), new Nothing()];
+            console.log(s1.isRight());
+            console.log(s1.isHalt() === false);
+            console.log(s1.isSuccess());
+            console.log(s1.isFail() === false);
+            console.log(s1.isJust() === false);
+            console.log(s1.isNothing() === false);
+
+            console.log(f1.isRight() === false);
+            console.log(f1.isHalt());
+            console.log(f1.isSuccess() === false);
+            console.log(f1.isFail());
+            console.log(f1.isJust() === false);
+            console.log(f1.isNothing() === false);
+
+            console.log(j1.isRight());
+            console.log(j1.isHalt() === false);
+            console.log(j1.isSuccess() === false);
+            console.log(j1.isFail() === false);
+            console.log(j1.isJust());
+            console.log(j1.isNothing() === false);
+
+            console.log(n1.isRight() === false);
+            console.log(n1.isHalt());
+            console.log(n1.isSuccess() === false);
+            console.log(n1.isFail() === false);
+            console.log(n1.isJust() === false);
+            console.log(n1.isNothing());
+
+            console.log(s1.constructor === s2.constructor)
+            console.log(f1.constructor === f2.constructor)
+            console.log(j1.constructor === j2.constructor)
+            console.log(n1.constructor === n2.constructor)          
+
+           
+            console.log("--------SUCCESS--------")
+            Success.of(1)
+            .map(x => x + 1)
+            .chain(x => Success.of(x + 1))            
+            .fold(x => console.log(x === 3), x => console.log("!!! test failed")) // finalize chain - extract result, first function called
+
+            let tmp1 = Success.of(0).map(x => x + 1).chain(x => Success.of(x + 1)).result()  // extract result
+            let tmp2 = Success.of(0).map(x => x + 1).chain(x => Success.of(x + 1)).getOrElse(100) // another way to extract result
+            console.log(tmp1 === tmp2)
+
+            Success.of(0)
+            .map(x => x + 1)
+            .onFailMap(_ => 100)  // recover methods not affect Success entity
+            .chain(x => Success.of(x + 1))
+            .onFailChain(_ => new Success("hello"))
+            .map(x => x + 1)
+            .onNothingMap(_ => 1000)
+            .chain(x => Success.of(x + 1))
+            .onNothingChain(_ => new Success("bye"))
+            .fold(x => console.log(x === 4), x => console.log("!!! test failed")) 
+
+
+            console.log("----------FAIL----------")
+            Fail.of("Some error")
+            .map(x => x + 1)
+            .chain(x => Success.of(x + 1))            
+            .fold(x => console.log("!!! test failed"), x => console.log(x === "Some error")) // second called
+
+            Fail.of("Some error")
+            .map(x => x + 1)
+            .onFailMap(_ => 100) // recover to Success 
+            .onNothingMap(_ => 1000) // not affect 
+            .onNothingChain(_ => Success.of(-1000)) // not affect 
+            .onFailMap(_ => 0) // since it was recovered earlier, this method has no effect      
+            .fold(x => console.log(x === 100), x => console.log("!!! test failed"))
+
+            console.log(Fail.of("Some error").getOrElse(1) === 1)
+
+
+            console.log("--------NOTHING--------")
+            Nothing.of()
+            .map(x => x + 1)
+            .chain(x => Success.of(x + 1))            
+            .fold(x => console.log("!!! test failed"), x => console.log(x === undefined)) // second called
+
+            Nothing.of(123)  // argument does not matter in Nothing
+            .map(x => x + 1)
+            .chain(x => Success.of(x + 1))            
+            .fold(x => console.log("!!! test failed"), x => console.log(x === undefined))
+
+            Nothing.fromNullable(null)
+            .map(x => x + 1)
+            .chain(x => Success.of(x + 1))            
+            .fold(x => console.log("!!! test failed"), x => console.log(x === undefined))
+
+            Nothing.fromNullable(1) // if argument is not null and not undefined - returns Just
+            .map(x => x + 1)
+            .chain(x => Just.of(x + 1))            
+            .fold(x => console.log(x === 3), x => console.log("!!! test failed")) // first called
+
+            Nothing.fromNullable(null)
+            .map(x => x + 1)
+            .onNothingChain(_ => Just.of(10))  // recover to Just          
+            .fold(x => console.log(x === 10), x => console.log("!!! test failed")) // first called
+
+            console.log(Nothing.of(null).getOrElse(1) === 1)
+
+
+            console.log("--------JUST--------")
+            Just.of(1)
+            .map(x => x + 1)
+            .chain(x => Just.of(x + 1))            
+            .fold(x => console.log(x === 3), x => console.log("!!! test failed")) // finalize chain - extract result, first function called
+
+            let tmp3 = Just.of(0).map(x => x + 1).chain(x => Just.of(x + 1)).result()  // extract result
+            let tmp4 = Just.of(0).map(x => x + 1).chain(x => Just.of(x + 1)).getOrElse(100) // another way to extract result
+            console.log(tmp1 === tmp2)
+
+            Just.of(0)
+            .map(x => x + 1)
+            .onFailMap(_ => 100)  // recover methods not affect Just entity
+            .chain(x => Success.of(x + 1))
+            .onFailChain(_ => new Success("hello"))
+            .map(x => x + 1)
+            .onNothingMap(_ => 1000)
+            .chain(x => Success.of(x + 1))
+            .onNothingChain(_ => new Success("bye"))
+            .fold(x => console.log(x === 4), x => console.log("!!! test failed")) 
+
+            Just.fromNullable(null) // return Nothing here
+            .map(x => x + 1)
+            .chain(x => Just.of(x + 1))            
+            .fold(x => console.log("!!! test failed"), x => console.log(x === undefined)) // second called
+
+
+            console.log("---------EFFECT---------")
+            const eff1 = Effect.of(() => 0)
+            .map(x => x + 1)
+            .chain(x => Effect.of(_ => x + 1))
+            console.log(eff1.run() === 2)
+
+            const eff2 = Effect.pure(0) // initialized by value and transform it to a function () => value
+            .map(x => x + 1)
+            .chain(x => Effect.of(_ => x + 1))
+            console.log(eff2.run() === 2)
+
+            // can unfold simple monads to one level of nesting
+            const eff3 = Effect.of(() => 0)
+            .map(x => Success.of(x + 1))
+            .chain(x => Effect.of(_ => Just.of(x + 1)))
+            .chain(x => Effect.of(_ => Success.of(x + 10)))
+            console.log(eff3.run() === 12)
+            
+            const eff4 = Effect.of(() => 0)
+            .map(x => Success.of(x + 1))
+            .chain(x => Effect.of(_ => Nothing.of()))            
+            console.log(eff4.run().isNothing())
+
+            const eff5 = Effect.of(() => 0)
+            .map(x => Success.of(x + 1))
+            .map(x => Fail.of("Some error"))           
+            console.log(eff5.run().getOrElse("There was a Fail") === "There was a Fail")
+            console.log(eff5.run().isFail())
+
+            const eff6 = Effect.of(() => 0)
+            .map(x => Success.of(Success.of(x + 1))) // first unfold of Success here, return Success.of(x + 1)
+            .chain(x => Effect.of(_ => Just.of(Just.of(x + 1)))) // second unfold of Success here, first unfold of Just
+            const eff6Res = eff6.run();
+            eff6Res.fold(x => console.log(x === 2), _ => "!!! test failed")
+            console.log(eff6Res.isJust())
+
+            const eff7 = Effect.of(() => 0)
+            .map(x => Success.of(Success.of(Success.of(x + 1)))) // unfold one level from argument and result on each step of chain 
+            .map(x => x)            
+            .chain(x => Effect.of(_ => Just.of(x + 1)))
+            const eff7Res = eff7.run();            
+            console.log(eff7Res === 2)
+
+
+            console.log("---------STATE---------")
+            const st1 = State.of(s => [0, s + 1])
+            .map(x => x + 1)
+            .chain(x => State.of(s => [x + 1, s + 1]))
+            const res1 = st1.run(0)
+            console.log(res1[0] === 2, res1[1] === 2)
+
+            let st2 = State.pure(0)
+            .map(x => x + 1)
+            .chain(x => State.of(s => [x + 1, s + 2]))            
+            const res2 = st2.fold(0)  // same as run() - for interface uniformity 
+            console.log(res2[0] === 2, res2[1] === 2)
+
+            for(let i = 3; i <= 100; i++) {
+                st1.mapIter(x => x + 1)
+                st2.chainIter(x => State.of(s => [x + 1, s + 1]))
+            }                  
+
+            console.log(st1.runIter(0)[0] === 100) // clears all functions added through iter - default behavior
+            console.log(st1.runIter(0)[0] === 2)   // always execute run() method before iteration
+
+            console.log(st2.runIter(0, false)[1] === 100) // not clear all functions added through iter 
+            console.log(st2.runIter(0, false)[0] === 100) // not clear all functions added through iter 
+            
+            const st3 = st2.chain(x => State.of(s => [x + 1, s + 1])) // since the map and chain methods return a new monad, the iterative structure is empty
+            const res3 = st3.run(0)
+            console.log(res3[0] === 3, res3[1] === 3)
+            const res4 = st3.runIter(0)
+            console.log(res4[0] === 3, res4[1] === 3)
+
+
+            console.log("--CATCH ERRORS---")
+            try {
+                Success.of(1).chain(x => x).result()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                Just.of("Some error").map(_ => Nothing.of()).getOrElse(10)
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                Fail.of("Some error").result()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                Nothing.of("Some error").result()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                Effect.of(() => 10).chain(x => x).run()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                Effect.of(() => 10).map(x => Effect.of(_ => x)).run()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                State.of(() => [0, 10]).chain(x => x).run()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+            try {
+                State.of(() => [0, 10]).map(x => State.of(_ => [10, 0])).run()
+                console.log("!!! test_failed")
+            } catch(err) {
+                console.log(err instanceof MonadError)
+            }
+
+
+            console.log("---APPLICATIVE METHOD---")
+            try { Success.of(5).ap(Success.of(5))}
+            catch(err) { console.log(err instanceof MonadError) }
+
+            try { Success.of(x => x).ap(4)}
+            catch(err) { console.log(err instanceof MonadError) }
+
+            try { Just.of(5).ap(Success.of(5))}
+            catch(err) { console.log(err instanceof MonadError) }
+
+            try { Just.of(x => x).ap(4)}
+            catch(err) { console.log(err instanceof MonadError) }
+
+            console.log(Success.of(x => x * x).ap(Success.of(5)).result() === 25)
+            console.log(Just.of(x => x + x).ap(Just.of(5)).result() === 10)
+
+            console.log(Success.of(x => x * x).ap(Fail.of("some error")).getOrElse(100) === 100)
+            console.log(Just.of(x => x + x).ap(Nothing.of()).fold(x => x, () => 100) === 100)
+
+            console.log(Fail.of("some error").ap(Success.of(1)).getOrElse(100) === 100)
+            console.log(Nothing.of().ap(Just.of(1)).fold(x => x, () => 100) === 100)
+
+            // type of value's monad defines type of the result
+            console.log(Success.of(x => x).ap(Just.of(10)).isJust())
+            console.log(Just.of(x => x).ap(Success.of(10)).isSuccess())
+
+            const fn = x => y => z => x * y * z
+
+            Just.of(fn)
+            .ap(Just.of(5))
+            .ap(Just.of(5))
+            .ap(Just.of(5))
+            .fold(x => console.log(x === 125), _ => console.log("!!! test failed"))
+
+            const nothing = Just.of(fn)
+            .ap(Just.of(5))
+            .ap(Nothing.of())
+            .ap(Just.of(5))            
+            console.log(nothing.isNothing())
+
+
+        </script>
+    </body>
+</html>
