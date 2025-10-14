@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Monads full mocha tests</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/mocha@10.2.0/mocha.min.css">
+    <style>#mocha { margin: 20px; }</style>
+</head>
+<body>
+<div id="mocha"></div>
+<script src="https://cdn.jsdelivr.net/npm/mocha@10.2.0/mocha.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chai@4.3.7/chai.min.js"></script>
+<script src="../src/monads_no_module.js"></script>
+<script>mocha.setup('bdd');</script>
+<script>
+const { assert, expect } = chai;
+const {Either, Success, Fail, Maybe, Just, Nothing, Effect, State, MonadError} = Monads;
+
+describe('Monad Tests (complete)', function() {
+    describe('Introspection Methods', function() {
+        it('should return correct introspection values for Success/Fail/Just/Nothing', function() {
+            const [s1, f1, j1, n1] = [Success.of(1), Fail.of('e'), Just.of(1), Nothing.of()];
+            const [s2, f2, j2, n2] = [new Success(1), new Fail('e'), new Just(1), new Nothing()];
+            assert.isTrue(s1.isRight());
+            assert.isFalse(s1.isHalt());
+            assert.isTrue(s1.isSuccess());
+            assert.isFalse(s1.isFail());
+            assert.isFalse(s1.isJust());
+            assert.isFalse(s1.isNothing());
+
+            assert.isFalse(f1.isRight());
+            assert.isTrue(f1.isHalt());
+            assert.isFalse(f1.isSuccess());
+            assert.isTrue(f1.isFail());
+            assert.isFalse(f1.isJust());
+            assert.isFalse(f1.isNothing());
+
+            assert.isTrue(j1.isRight());
+            assert.isFalse(j1.isHalt());
+            assert.isFalse(j1.isSuccess());
+            assert.isFalse(j1.isFail());
+            assert.isTrue(j1.isJust());
+            assert.isFalse(j1.isNothing());
+
+            assert.isFalse(n1.isRight());
+            assert.isTrue(n1.isHalt());
+            assert.isFalse(n1.isSuccess());
+            assert.isFalse(n1.isFail());
+            assert.isFalse(n1.isJust());
+            assert.isTrue(n1.isNothing());
+
+            assert.strictEqual(s1.constructor, s2.constructor);
+            assert.strictEqual(f1.constructor, f2.constructor);
+            assert.strictEqual(j1.constructor, j2.constructor);
+            assert.strictEqual(n1.constructor, n2.constructor);
+        });
+    });
+
+    describe('Either.try', function() {
+        it('should fold Success if no error, Fail if error', function() {
+            Either.try(() => { let x = []; x[0] = 2; return x})
+                .map(x => {x[1] = 3; return x})
+                .fold(x => assert.strictEqual(x.length, 2), () => assert.fail());
+
+            Either.try(() => { let x = null; x[0] = 2; return x})
+                .map(x => {x[1] = 3; return x})
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+
+            Either.try(() => { throw new TypeError() })
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+        });
+    });
+
+    describe('Success', function() {
+        it('success chain/map/result/getOrElse', function() {
+            Success.of(1)
+                .map(x => x + 1)
+                .chain(x => Success.of(x + 1))
+                .fold(x => assert.strictEqual(x, 3), x => assert.fail());
+
+            let tmp1 = Success.of(0).map(x => x + 1).chain(x => Success.of(x + 1)).result();
+            let tmp2 = Success.of(0).map(x => x + 1).chain(x => Success.of(x + 1)).getOrElse(100);
+            assert.strictEqual(tmp1, tmp2);
+        });
+        it('recovery methods do nothing for Success', function() {
+            Success.of(0)
+                .map(x => x + 1)
+                .onFailMap(_ => 100)
+                .chain(x => Success.of(x + 1))
+                .onFailChain(_ => new Success("hello"))
+                .map(x => x + 1)
+                .onNothingMap(_ => 1000)
+                .chain(x => Success.of(x + 1))
+                .onNothingChain(_ => new Success("bye"))
+                .fold(x => assert.strictEqual(x, 4), x => assert.fail());
+        });
+    });
+
+    describe('Fail', function() {
+        it('fail propagation and recover', function() {
+            Fail.of("Some error")
+                .map(x => x + 1)
+                .chain(x => Success.of(x + 1))
+                .fold(
+                    () => assert.fail(),
+                    x => assert.strictEqual(x, "Some error")
+                );
+        });
+
+        it('fail onFailMap can recover, order matters', function() {
+            Fail.of("Some error")
+                .map(x => x + 1)
+                .onFailMap(_ => 100)
+                .onNothingMap(_ => 1000)
+                .onNothingChain(_ => Success.of(-1000))
+                .onFailMap(_ => 0) // since was recovered, no effect
+                .fold(
+                    x => assert.strictEqual(x, 100),
+                    () => assert.fail()
+                );
+        });
+
+        it('fallback value from Fail', function() {
+            assert.strictEqual(Fail.of("error").getOrElse(1), 1);
+        });
+    });
+
+    describe('Maybe.fromNullable', function() {
+        it('handles null and custom predicate', function() {
+            Maybe.fromNullable(null)
+                .map(x => x * x)
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+
+            Maybe.fromNullable([])
+                .map(x => {x.push(1); return x})
+                .fold(x => assert.strictEqual(x[0], 1), () => assert.fail());
+
+            Maybe.fromNullable([], a => a.length === 0)
+                .map(x => {x.push(1); return x})
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+
+            Maybe.fromNullable({}, o => Object.keys(o).length === 0)
+                .map(x => {x[1] = 1; return x})
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+
+            Maybe.fromNullable({}, [])
+                .map(x => {x[1] = 1; return x})
+                .fold(x => assert.strictEqual(x[1], 1), () => assert.fail());
+
+            Maybe.fromNullable(Number("arfgh"), num => isNaN(num))
+                .fold(() => assert.fail(), () => assert.isTrue(true));
+        });
+    });
+
+    describe('Nothing', function() {
+        it('default behaviors', function() {
+            Nothing.of()
+                .map(x => x + 1)
+                .chain(x => Success.of(x + 1))
+                .fold(x => assert.fail(), x => assert.strictEqual(x, undefined));
+
+            Nothing.of(123)
+                .map(x => x + 1)
+                .chain(x => Success.of(x + 1))
+                .fold(x => assert.fail(), x => assert.strictEqual(x, undefined));
+
+            Nothing.fromNullable(null)
+                .map(x => x + 1)
+                .chain(x => Success.of(x + 1))
+                .fold(x => assert.fail(), x => assert.strictEqual(x, undefined));
+
+            Nothing.fromNullable(1)
+                .map(x => x + 1)
+                .chain(x => Just.of(x + 1))
+                .fold(x => assert.strictEqual(x, 3), x => assert.fail());
+
+            Nothing.fromNullable(null)
+                .map(x => x + 1)
+                .onNothingChain(_ => Just.of(10))
+                .fold(x => assert.strictEqual(x, 10), x => assert.fail());
+
+            assert.strictEqual(Nothing.of(null).getOrElse(1), 1);
+        });
+    });
+
+    describe('Just', function() {
+        it('Just behaves as expected', function() {
+            Just.of(1)
+                .map(x => x + 1)
+                .chain(x => Just.of(x + 1))
+                .fold(x => assert.strictEqual(x, 3), x => assert.fail());
+
+            let tmp3 = Just.of(0).map(x => x + 1).chain(x => Just.of(x + 1)).result();
+            let tmp4 = Just.of(0).map(x => x + 1).chain(x => Just.of(x + 1)).getOrElse(100);
+            assert.strictEqual(tmp3, tmp4);
+
+            Just.of(0)
+                .map(x => x + 1)
+                .onFailMap(_ => 100)
+                .chain(x => Success.of(x + 1))
+                .onFailChain(_ => new Success("hello"))
+                .map(x => x + 1)
+                .onNothingMap(_ => 1000)
+                .chain(x => Success.of(x + 1))
+                .onNothingChain(_ => new Success("bye"))
+                .fold(x => assert.strictEqual(x, 4), x => assert.fail());
+
+            Just.fromNullable(null)
+                .map(x => x + 1)
+                .chain(x => Just.of(x + 1))
+                .fold(x => assert.fail(), x => assert.strictEqual(x, undefined));
+        });
+    });
+
+    describe('Effect', function() {
+        it('sync composition', function() {
+            const eff1 = Effect.of(() => 0)
+                .map(x => x + 1)
+                .chain(x => Effect.of(_ => x + 1));
+            assert.strictEqual(eff1.run(), 2);
+
+            const eff2 = Effect.pure(0)
+                .map(x => x + 1)
+                .chain(x => Effect.of(_ => x + 1));
+            assert.strictEqual(eff2.run(), 2);
+
+            const eff3 = Effect.of(() => 0)
+                .map(x => Success.of(x + 1))
+                .chain(x => Effect.of(_ => Just.of(x + 1)))
+                .chain(x => Effect.of(_ => Success.of(x + 10)));
+            assert.strictEqual(eff3.run(), 12);
+
+            const eff4 = Effect.of(() => 0)
+                .map(x => Success.of(x + 1))
+                .chain(x => Effect.of(_ => Nothing.of()));
+            assert.isTrue(eff4.run().isNothing());
+
+            const eff5 = Effect.of(() => 0)
+                .map(x => Success.of(x + 1))
+                .map(x => Fail.of("Some error"));
+            assert.strictEqual(eff5.run().getOrElse("There was a Fail"), "There was a Fail");
+            assert.isTrue(eff5.run().isFail());
+        });
+
+        it('nested monads flatten', function() {
+            const eff6 = Effect.of(() => 0)
+                .map(x => Success.of(Success.of(x + 1)))
+                .chain(x => Effect.of(_ => Just.of(Just.of(x + 1))));
+            const eff6Res = eff6.run();
+            eff6Res.fold(x => assert.strictEqual(x, 2), _ => assert.fail());
+            assert.isTrue(eff6Res.isJust());
+
+            const eff7 = Effect.of(() => 0)
+                .map(x => Success.of(Success.of(Success.of(x + 1))))
+                .map(x => x)
+                .chain(x => Effect.of(_ => Just.of(x + 1)));
+            const eff7Res = eff7.run();
+            assert.strictEqual(eff7Res, 2);
+        });
+
+        it('Effect async chain/map', async function() {
+            const eff8 = Effect.of(async () => await 0)
+                .mapAsync(async x => await Success.of(Success.of(Success.of(x + 1))))
+                .mapAsync(async x => await x)
+                .chainAsync(async x => await Effect.of(_ => Just.of(x + 1)));
+            const eff8Res = await eff8.runAsync();
+            assert.strictEqual(eff8Res, 2);
+
+            const eff9 = Effect.of(() => 0)
+                .chain(x => new Effect(_ => Success.of(Success.of(Success.of(x + 1)))))
+                .chain(x => new Effect(_ => x))
+                .chainAsync(async x => await Effect.of(_ => Just.of(x + 1)))
+                .mapAsync(async x => x + 5);
+            const eff9Res = await eff9.runAsync();
+            assert.strictEqual(eff9Res, 7);
+
+            const eff10 = Effect.of(() => 0)
+                .mapAsync(x => Success.of(Success.of(Success.of(x + 1))))
+                .mapAsync(x => x)
+                .chainAsync(x => Effect.of(_ => Just.of(x + 1)));
+            const eff10Res = await eff10.runAsync();
+            assert.strictEqual(eff10Res, 2);
+        });
+    });
+
+    describe('State', function() {
+        it('State basic sync and iter', function() {
+            const st1 = State.of(s => [0, s + 1])
+                .map(x => x + 1)
+                .chain(x => State.of(s => [x + 1, s + 1]));
+            const res1 = st1.run(0);
+            assert.strictEqual(res1[0], 2); assert.strictEqual(res1[1], 2);
+
+            let st2 = State.pure(0)
+                .map(x => x + 1)
+                .chain(x => State.of(s => [x + 1, s + 2]));
+            const res2 = st2.fold(0);
+            assert.strictEqual(res2[0], 2); assert.strictEqual(res2[1], 2);
+
+            for(let i = 3; i <= 100; i++) {
+                st1.mapIter(x => x + 1)
+                st2.chainIter(x => State.of(s => [x + 1, s + 1]))
+            }
+            assert.strictEqual(st1.runIter(0)[0], 100);
+            assert.strictEqual(st1.runIter(0)[0], 2);
+            assert.strictEqual(st2.runIter(0, false)[1], 100);
+            assert.strictEqual(st2.runIter(0, false)[0], 100);
+
+            const st3 = st2.chain(x => State.of(s => [x + 1, s + 1]));
+            const res3 = st3.run(0);
+            assert.strictEqual(res3[0], 3); assert.strictEqual(res3[1], 3);
+            const res4 = st3.runIter(0);
+            assert.strictEqual(res4[0], 3); assert.strictEqual(res4[1], 3);
+        });
+
+        it('State async methods', async function() {
+            let st4 = State.pure(0)
+                .mapAsync(async x => await x + 1)
+                .chainAsync(async x => await State.of(s => [x + 1, s + 2]));
+            const res5 = await st4.foldAsync(0);
+            assert.strictEqual(res5[0], 2); assert.strictEqual(res5[1], 2);
+
+            let st5 = State.pure(0)
+                .map(x => x + 1)
+                .chain(x => State.of(s => [x + 1, s + 2]))
+                .mapAsync(async x => x + 1)
+                .chainAsync(async x => await new State(s => [x, s + 1]));
+            const res6 = await st5.foldAsync(0);
+            assert.strictEqual(res6[0], 3); assert.strictEqual(res6[1], 3);
+        });
+    });
+
+    describe('Errors (MonadError)', function() {
+        it('throws on bad usage: chain/map/result', function(done) {
+            assert.throws(() => Success.of(1).chain(x => x).result(), MonadError);
+            assert.throws(() => Just.of("e").map(_ => Nothing.of()).getOrElse(10), MonadError);
+            assert.throws(() => Fail.of("e").result(), MonadError);
+            assert.throws(() => Nothing.of("e").result(), MonadError);
+            assert.throws(() => Effect.of(() => 10).chain(x => x).run(), MonadError);
+            assert.throws(() => Effect.of(() => 10).map(x => Effect.of(_ => x)).run(), MonadError);
+            assert.throws(() => State.of(() => [0, 10]).chain(x => x).run(), MonadError);
+            assert.throws(() => State.of(() => [0, 10]).map(x => State.of(_ => [10, 0])).run(), MonadError);
+
+            (async () => {
+                try {
+                    await Effect.of(async () => await 10).map(x => x).runAsync();
+                    done(new Error("should have thrown MonadError in async Effect"));
+                } catch(err) {
+                    assert.instanceOf(err, MonadError);
+                }
+                try {
+                    await State.of(async () => await [0, 10]).map(x => State.of(_ => [10, 0])).runAsync();
+                } catch(err) {
+                    assert.instanceOf(err, MonadError);
+                }
+                let st = State.pure(5);
+                try {
+                    for(let i = 0; i <= 100; i++) {
+                        st.mapIter(async x => await x + 1)
+                        st.chainIter(async x => await State.of(s => [x + 1, s + 1]))
+                    }
+                    await st.runIter(0);
+                } catch(err) {
+                    assert.instanceOf(err, MonadError);
+                }
+                done();
+            })();
+        });
+    });
+
+    describe('Applicative (ap) method', function() {
+        it('ap throws on wrong args or structure', function() {
+            assert.throws(() => Success.of(5).ap(Success.of(5)), MonadError);
+            assert.throws(() => Success.of(x => x).ap(4), MonadError);
+            assert.throws(() => Just.of(5).ap(Success.of(5)), MonadError);
+            assert.throws(() => Just.of( x=> x).ap(4), MonadError);
+        });
+        it('ap Success and Just normal', function() {
+            assert.strictEqual(Success.of(x => x * x).ap(Success.of(5)).result(), 25);
+            assert.strictEqual(Just.of(x => x + x).ap(Just.of(5)).result(), 10);
+        });
+        it('ap with fail/nothing fallback', function() {
+            assert.strictEqual(Success.of(x => x * x).ap(Fail.of("error")).getOrElse(100), 100);
+            assert.strictEqual(Just.of(x => x + x).ap(Nothing.of()).fold(x => x, () => 100), 100);
+            assert.strictEqual(Fail.of("e").ap(Success.of(1)).getOrElse(100), 100);
+            assert.strictEqual(Nothing.of().ap(Just.of(1)).fold(x => x, () => 100), 100);
+        });
+        it('ap: type of container defines type of result', function() {
+            assert.isTrue(Success.of(x => x).ap(Just.of(10)).isJust());
+            assert.isTrue(Just.of(x => x).ap(Success.of(10)).isSuccess());
+        });
+        it('ap supports currying', function() {
+            const fn = x => y => z => x * y * z;
+            Just.of(fn)
+                .ap(Just.of(5))
+                .ap(Just.of(5))
+                .ap(Just.of(5))
+                .fold(x => assert.strictEqual(x, 125), _ => assert.fail());
+            const nothing = Just.of(fn).ap(Just.of(5)).ap(Nothing.of()).ap(Just.of(5));
+            assert.isTrue(nothing.isNothing());
+        });
+    });
+
+});
+</script>
+<script>
+    mocha.checkLeaks();
+    mocha.run();
+</script>
+</body>
+</html>
