@@ -167,7 +167,7 @@ class Either extends SMonad {
             panicOnPromise(result, 'Either.try');
             return new Success(result)
         } catch(error) { 
-            if (isMonadError(error)) { throw new error }
+            if (isMonadError(error)) { throw error }
             return new Fail(error)
         }
     }
