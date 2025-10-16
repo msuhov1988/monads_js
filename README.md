@@ -93,6 +93,7 @@ A monadic container for computations with hidden state.
 - Main methods: `chain, chainAsync, map, mapAsync, fold, foldAsync, run, runAsync`
 - Methods `mapIter, chainIter, runIter` let you build large chains and execute them with a simple loop.
 - IMPORTANT: mapIter, chainIter do not return new monads but mutate the current one in place!
+- BUT this ...Iter mutability is strictly restricted to the current instance. When the standard (classic) methods are called, the structure itself is not duplicated or propagated to new monad instances.
 
 Example:
 ```

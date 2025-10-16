@@ -842,6 +842,76 @@ class Effect extends LMonad {
         return new Effect(effectNew)
     }
 
+    /** 
+     * Recover from errors (SYNC)      
+     * @param {function(): R} func
+     * @returns {Effect<() => R>}
+     * @throws {MonadError} 'Improper use of "catch" method'
+     */
+    catch(func) {
+        /**
+         * @type {function(): R}
+         */
+        const effectNew = () => {
+            try {
+                let out = this._effect();
+                if (out instanceof Promise) {
+                    throw new MonadError('Effect.catch - inner function must NOT return Promise. Use catchAsync instead')
+                }
+                if (isSMonad(out)) {
+                    if (out.isHalt?.()) { return out }
+                    if (out.isRight?.()) { out = out.result() }
+                } 
+                return out
+            } catch(err) { 
+                if (err instanceof MonadError) { throw err }        
+                const result = func();
+                if (result instanceof Promise) {
+                    throw new MonadError('Effect.catch - argument function must NOT return Promise. Use catchAsync instead')
+                }                              
+                if (isLMonad(result) && (!(result instanceof Effect))) {
+                    throw new MonadError('Improper use of "catch" method - func must return value or Effect')
+                }
+                if (result instanceof Effect) { return result._effect() }
+                if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+                return result
+            }
+        }
+        return new Effect(effectNew)    
+    }
+
+    /** 
+     * Recover from errors (ASYNC)      
+     * @param {function(): R | Promise<R>} func
+     * @returns {Effect<() => R>}
+     * @throws {MonadError} 'Improper use of "catch" method'
+     */
+    catchAsync(func) {
+        /**
+         * @type {function(): R | Promise<R>}
+         */
+        const effectNew = async () => {
+            try {
+                let out = await this._effect();                
+                if (isSMonad(out)) {
+                    if (out.isHalt?.()) { return out }
+                    if (out.isRight?.()) { out = out.result() }
+                } 
+                return out
+            } catch(err) { 
+                if (err instanceof MonadError) { throw err }        
+                const result = await func();                                             
+                if (isLMonad(result) && (!(result instanceof Effect))) {
+                    throw new MonadError('Improper use of "catch" method - func must return value or Effect')
+                }
+                if (result instanceof Effect) { return await result._effect() }
+                if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+                return result
+            }
+        }
+        return new Effect(effectNew)    
+    }
+
     /**       
      * @returns {R}
      * @throws {MonadError}
@@ -1056,6 +1126,61 @@ class State extends LMonad {
             return [newVal, firstState]
         }
         return new State(newRun)
+    }
+
+    /** 
+     * Recover from errors (SYNC)
+     * @template V 
+     * @template S       
+     * @param {function(S): [V, S] | State<F>} func
+     * @returns {State<F>}
+     * @throws {MonadError} 'Improper use of "catch" method'
+     */
+    catch(func) {        
+        const newRun = (state) => {            
+            try {
+                const initial = this._run(state);
+                if (initial instanceof Promise) {
+                    throw new MonadError('State.catch - inner function must NOT return Promise. Use catchAsync instead')    
+                }                             
+                return initial
+            } catch(err) { 
+                if (err instanceof MonadError) { throw err }        
+                const result = func(state);
+                if (result instanceof Promise) {
+                    throw new MonadError('State.catch - argument function must NOT return Promise. Use catchAsync instead')
+                }                              
+                if (isLMonad(result) && (!(result instanceof State))) {
+                    throw new MonadError('Improper use of "catch" method - func must return value or State')
+                }
+                return (result instanceof State) ? result._run(state) : result               
+            }
+        }
+        return new State(newRun)    
+    }
+
+    /** 
+     * Recover from errors (ASYNC)
+     * @template V 
+     * @template S       
+     * @param {function(S): Promise<[V, S] | State<F>>} func
+     * @returns {State<F>}
+     * @throws {MonadError} 'Improper use of "catchAsync" method'
+     */
+    catchAsync(func) {
+        const newRun = async (state) => {            
+            try {                
+                return await this._run(state);               
+            } catch(err) { 
+                if (err instanceof MonadError) { throw err }        
+                const result = await func(state);                                                          
+                if (isLMonad(result) && (!(result instanceof State))) {
+                    throw new MonadError('Improper use of "catchAsync" method - func must return value or State')
+                }
+                return (result instanceof State) ? await result._run(state) : result               
+            }
+        }
+        return new State(newRun)    
     }
 
     /**    
