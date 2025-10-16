@@ -541,7 +541,9 @@ describe('Monad Tests (complete)', function() {
     describe('Errors (MonadError)', function() {
         it('throws on bad usage: chain/map/result', function(done) {
             assert.throws(() => Success.of(1).chain(x => x).result(), MonadError);
+            assert.throws(() => Success.of(1).chain(x => Effect.pure(0)).result(), MonadError);
             assert.throws(() => Just.of("e").map(_ => Nothing.of()).getOrElse(10), MonadError);
+            assert.throws(() => Just.of("e").map(_ => State.pure(0)).getOrElse(10), MonadError);
             assert.throws(() => Fail.of("e").result(), MonadError);
             assert.throws(() => Nothing.of("e").result(), MonadError);
             assert.throws(() => Effect.of(() => 10).chain(x => x).run(), MonadError);

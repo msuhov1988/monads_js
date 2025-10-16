@@ -1,18 +1,23 @@
 "use strict"
 
 
+const E_BRAND = Symbol('MonadError');
+
 class MonadError extends Error {
     constructor(message) {
         super(`MonadError: ${message}`);
         this.name = "MonadError";
+        this[E_BRAND] = true;
     }
 }
 
 
+const M_BRAND = Symbol('Monad');
+
 class Monad {
     static of() { throw new MonadError("Static Monad.of must be defined in subclass") }
 
-    constructor(value) { this._value = value }
+    constructor(value) { this._value = value; this[M_BRAND] = true; }
     
     chain() { throw new MonadError("Monad.chain must be defined in subclass") }
 
@@ -29,18 +34,16 @@ const L_BRAND = Symbol('LMonad');
 
 
 /**
- * @template P
- * @extends {Monad}
- * SMonad - simple monads like Either, Maybe.
+ * @extends {Monad} simple monads like Either, Maybe.
  */
 class SMonad extends Monad {     
     constructor(value) { super(value); this[S_BRAND] = true; }  
 
     ap() { throw new MonadError("SMonad.ap must be defined in subclass")  }
 
-    isRight() { throw new MonadError("SMonad.isRight must be defined in subclass") }
+    isRight() { return false }
 
-    isHalt() { throw new MonadError("SMonad.isHalt must be defined in subclass") }    
+    isHalt() { return false }    
 
     getOrElse() { throw new MonadError("SMonad.getOrElse must be defined in subclass")  }
 
@@ -61,11 +64,88 @@ class LMonad extends Monad {
     static pure() { throw new MonadError("LMonad.pure must be defined in subclass") }
 }
 
+const isMonadError = err => Boolean(err && err[E_BRAND]);
+const isMonad = v => Boolean(v && v[M_BRAND]);
 
 const isSMonad = v => Boolean(v && v[S_BRAND]);
-const isLMonad = v => Boolean(v && v[L_BRAND]);
+const isRightSMonad = v => (isSMonad(v) && v.isRight?.());
+const isHaltSMonad = v => (isSMonad(v) && v.isHalt?.());
+const unwrapSMonad = m => m.result();
 
-const identical = val => val
+const isLMonad = v => Boolean(v && v[L_BRAND]);
+const identical = val => val;
+
+/** 
+ * @returns {void}
+ * @throws {MonadError} - throws if value is Promise. Method for concrete definition.
+ */
+function panicOnPromise(value, method) {
+    if (value instanceof Promise) {
+        throw new MonadError(`${method} - inner or outer function must NOT return Promise. Use async analog instead.` )
+    }
+}
+
+/**
+ * @returns {void}
+ * @throws {MonadError} - throws if value is not a function. Method for concrete definition.
+ */
+function panicIfNotFunction(value, method) {
+    if (typeof value !== 'function') {
+        throw new MonadError(`${method} - requires a function inside.`)
+    }
+}
+
+/**
+ * @returns {void}
+ * @throws {MonadError} - throws if value is not SMonad entity. Method for concrete definition.
+ */
+function panicOnChainViolation(value, method) {
+    if (!isSMonad(value)) {
+        throw new MonadError(`${method} - improper use, applicable value must be SMonad`)
+    }
+}
+
+/**
+ * @returns {void}
+ * @throws {MonadError} - throws if value is Monad entity. Method for concrete definition.
+ */
+function panicOnMapViolation(value, method) {
+    if (isMonad(value)) {
+        throw new MonadError(`${method} - improper use, applicable value must NOT be Monad`)
+    } 
+}
+
+/**
+ * @returns {void}
+ * @throws {MonadError} - throws if value is LMonad entity. Method for concrete definition.
+ */
+function panicOnLazyMapViolation(value, method) {
+    if (isLMonad(value)) {
+        throw new MonadError(`${method} - improper use, applicable value must NOT be LMonad`)
+    } 
+}
+
+/**
+ * NEED FOR apply, call or bind, because has 'this' inside!
+ * @returns {void}
+ * @throws {MonadError} - throws if value is entity of another class. Method for concrete def.
+ */
+function panicOnAnotherInstance(value, method) {      
+    if (!(value instanceof this.constructor)) {
+        throw new MonadError(`${method} - improper use, applicable value must be the same type of LMonad`)
+    } 
+}
+
+/**
+ * NEED FOR apply, call or bind, because has 'this' inside!
+ * @returns {void}
+ * @throws {MonadError} - throws if value is LMonad, but another class. Method for concrete def.
+ */
+function panicOnAnotherLazyMonad(value, method) {      
+    if (isLMonad(value) && !(value instanceof this.constructor)) {
+        throw new MonadError(`${method} - improper use, applicable value must be the SAME type of LMonad or NOT LMonad`)
+    } 
+}
 
 
 /**
@@ -78,15 +158,15 @@ class Either extends SMonad {
      * @template V     
      * @param {() => V} testedFunc
      * @returns {Fail<E>|Success<V>}
+     * @throws {MonadError} - if result of testedFunc is Promise
      */
     static try(testedFunc) {
         try {
             const result = testedFunc();            
-            if (result instanceof Promise) {
-                throw new MonadError('Either.try - function must NOT return Promise.')
-            }
+            panicOnPromise(result, 'Either.try');
             return new Success(result)
-        } catch(error) {
+        } catch(error) { 
+            if (isMonadError(error)) { throw new error }
             return new Fail(error)
         }
     }
@@ -125,13 +205,9 @@ class Success extends Either {
      * @param {A} value
      * @returns {Success<A>}     
      */
-    static of(value) {        
-        return new Success(value)        
-    }    
+    static of(value) { return new Success(value) }    
 
-    /**
-     * @param {A} value
-     */
+    /** @param {A} value */
     constructor(value) { super(value) } 
     
     /**    
@@ -141,9 +217,7 @@ class Success extends Either {
     */
     chain(func) {       
         const res = func(this._value);
-        if (!isSMonad(res)) {
-            throw new MonadError('Improper use of "chain" method - function must return SMonad')
-        }
+        panicOnChainViolation(res, 'Success.chain');
         return res        
     }
 
@@ -155,9 +229,7 @@ class Success extends Either {
     */
     map(func) {
         const res = func(this._value);        
-        if (isSMonad(res)) {
-            throw new MonadError('Improper use of "map" method - function must NOT return SMonad')
-        }        
+        panicOnMapViolation(res, 'Success.map');      
         return new Success(res)
     }    
 
@@ -191,57 +263,35 @@ class Success extends Either {
     */
     onNothingMap(_) { return this } 
 
-    /**
-     * @template V
-     * @template R
-     * @param {SMonad<V>} valueContainer
-     * @returns {SMonad<R>} 
+    /**     
      * Applies a value enclosed in a container to function in the container.
      * Mixing Either and Maybe is possible.
      * Monad of the argument defines monad of the result
+     * @param {SMonad} valueContainer
+     * @returns {SMonad} 
      * @throws {MonadError} 
      */
-    ap(valueContainer) {        
-        if (typeof this._value !== 'function') {
-            throw new MonadError('.ap: A monad must contain a function')
-        }
-        if (!isSMonad(valueContainer)) {
-            throw new MonadError('.ap: Argument must be an SMonad entity')    
-        }        
-        if(valueContainer.isHalt()) { return valueContainer }
-                
+    ap(valueContainer) {
+        panicIfNotFunction(this._value, 'Success.ap');       
+        panicOnChainViolation(valueContainer, 'Success.ap');       
+        if(valueContainer.isHalt()) { return valueContainer }                
         const res = this._value(valueContainer._value);               
         return valueContainer.constructor.of(res)  
     }
 
-    /**    
-     * @returns {true}
-     */
-    isRight() { return true }
+    /** @returns {true} */
+    isRight() { return true }   
 
-    /**    
-     * @returns {false}
-     */
-    isHalt() { return false }
-
-    /**    
-     * @returns {true} for point-by-point introspection
-     */
+    /** @returns {true} for point-by-point introspection */
     isSuccess() { return true }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isFail() { return false }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isJust() { return false }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isNothing() { return false }
 
     /**
@@ -251,17 +301,16 @@ class Success extends Either {
     */
     getOrElse(_) { return this._value }    
 
-    /**     
-     * @returns {A}
-     */
+    /** @returns {A} */
     result() { return this._value }
 
     /**
-     * @template R
+     * @template R1
+     * @template R2
      * @template E
-     * @param {function(A): R} onSuccess 
-     * @param {function(E): R} onFail     
-     * @returns {R} 
+     * @param {function(A): R1} onSuccess 
+     * @param {function(E): R2} onFail     
+     * @returns {R1} 
      */
     fold(onSuccess, onFail) { return onSuccess(this._value) }
 
@@ -278,13 +327,9 @@ class Fail extends Either {
      * @param {E} value
      * @returns {Fail<E>}
      */
-    static of(value) {        
-        return new Fail(value)        
-    }    
+    static of(value) { return new Fail(value) }    
 
-    /**
-     * @param {E} value
-     */
+    /** @param {E} value */
     constructor(value) { super(value) } 
     
     /**
@@ -307,9 +352,7 @@ class Fail extends Either {
     */
     onFailChain(func) {
         const res = func(this._value);
-        if (!isSMonad(res)) {
-            throw new MonadError('Improper use of "chain" method - function must return SMonad')
-        }
+        panicOnChainViolation(res, 'Fail.onFailChain');
         return res
     }
 
@@ -322,9 +365,7 @@ class Fail extends Either {
     */
     onFailMap(func) {
         const res = func(this._value);
-        if (isSMonad(res)) {
-            throw new MonadError('Improper use of "map" method - function must NOT return SMonad')
-        }
+        panicOnMapViolation(res, 'Fail.onFailMap');
         return new Success(res)
     } 
     
@@ -343,42 +384,26 @@ class Fail extends Either {
     */
     onNothingMap(_) { return this } 
 
-    /**
-     * @template V
-     * @param {SMonad<V>} _
+    /**    
+     * @param {SMonad} _
      * @returns {Fail<E>}
      * Applies a value enclosed in a container to a function in the container.     
      */
-    ap(_) { return this }
+    ap(_) { return this }   
 
-    /**    
-     * @returns {false}
-     */
-    isRight() { return false }
-
-    /**    
-     * @returns {true}
-     */
+    /** @returns {true} */
     isHalt() { return true }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isSuccess() { return false } 
 
-    /**    
-     * @returns {true} for point-by-point introspection
-     */
+    /** @returns {true} for point-by-point introspection */
     isFail() { return true }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isJust() { return false }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isNothing() { return false }
 
     /** 
@@ -388,17 +413,16 @@ class Fail extends Either {
     */
     getOrElse(value) { return value } 
 
-    /**     
-     * @throws {MonadError} No result inside the Fail container.
-     */
+    /** @throws {MonadError} No result inside the Fail container */
     result() { throw new MonadError("Cannot extract result from the Fail container") }
 
     /**
      * @template A
-     * @template R
-     * @param {function(A): R} onSuccess 
-     * @param {function(E): R} onFail      
-     * @returns {R} 
+     * @template R1
+     * @template R2
+     * @param {function(A): R1} onSuccess 
+     * @param {function(E): R2} onFail      
+     * @returns {R2} 
      */
     fold(onSuccess, onFail) { return onFail(this._value) }
 
@@ -415,13 +439,9 @@ class Just extends Maybe {
      * @param {A} value
      * @returns {Just<A>}
      */
-    static of(value) {
-        return new Just(value)        
-    }    
+    static of(value) { return new Just(value) }    
 
-    /**
-     * @param {A} value
-     */
+    /** @param {A} value */
     constructor(value) { super(value) } 
     
     /**    
@@ -431,9 +451,7 @@ class Just extends Maybe {
     */
     chain(func) {
         const res = func(this._value);        
-        if (!isSMonad(res)) {
-            throw new MonadError('Improper use of "chain" method - function must return SMonad')
-        }        
+        panicOnChainViolation(res, 'Just.chain');        
         return res        
     }
 
@@ -445,9 +463,7 @@ class Just extends Maybe {
     */
     map(func) {
         const res = func(this._value);        
-        if (isSMonad(res)) {
-            throw new MonadError('Improper use of "map" method - function must NOT return SMonad')
-        }                
+        panicOnMapViolation(res, 'Just.map');               
         return new Just(res)
     }
 
@@ -481,57 +497,35 @@ class Just extends Maybe {
     */
     onNothingMap(_) { return this } 
 
-    /**
-     * @template V
-     * @template R
-     * @param {SMonad<V>} valueContainer
-     * @returns {SMonad<R>}
+    /**     
      * Applies a value enclosed in a container to function in the container.
-     * Mixing Either and Maybe is possible
-     * Monad of argument defines monad of the result
-     * @throws {MonadError}
+     * Mixing Either and Maybe is possible.
+     * Monad of the argument defines monad of the result
+     * @param {SMonad} valueContainer
+     * @returns {SMonad} 
+     * @throws {MonadError} 
      */
     ap(valueContainer) {
-        if (typeof this._value !== 'function') {
-            throw new MonadError('.ap: A monad must contain a function')
-        }
-        if (!isSMonad(valueContainer)) {
-            throw new MonadError('.ap: Argument must be an SMonad entity')    
-        }        
-        if(valueContainer.isHalt()) { return valueContainer } 
-        
-        const res = this._value(valueContainer._value);        
+        panicIfNotFunction(this._value, 'Just.ap');       
+        panicOnChainViolation(valueContainer, 'Just.ap');       
+        if(valueContainer.isHalt()) { return valueContainer }                
+        const res = this._value(valueContainer._value);               
         return valueContainer.constructor.of(res)  
     }
 
-    /**    
-     * @returns {true}
-     */
-    isRight() { return true }
+    /** @returns {true} */
+    isRight() { return true }    
 
-    /**    
-     * @returns {false}
-     */
-    isHalt() { return false }
-
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isSuccess() { return false }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isFail() { return false }
 
-    /**    
-     * @returns {true} for point-by-point introspection
-     */
+    /** @returns {true} for point-by-point introspection */
     isJust() { return true }
 
-    /**    
-     * @returns {false} for point-by-point introspection
-     */
+    /** @returns {false} for point-by-point introspection */
     isNothing() { return false }
 
     /**
@@ -541,16 +535,15 @@ class Just extends Maybe {
     */
     getOrElse(_) { return this._value }    
 
-    /**     
-     * @returns {A}
-     */
+    /** @returns {A} */
     result() { return this._value }
 
     /**
-     * @template R     
-     * @param {function(A): R} onJust     
-     * @param {function(): R} onNothing 
-     * @returns {R} 
+     * @template R1
+     * @template R2     
+     * @param {function(A): R1} onJust     
+     * @param {function(): R2} onNothing 
+     * @returns {R1} 
      */
     fold(onJust, onNothing) { return onJust(this._value) }
 
@@ -566,26 +559,22 @@ class Nothing extends Maybe {
      * @param {*} _ argument is unnecessary, only for uniformity of interfaces purpose
      * @returns {Nothing}
      */
-    static of(_) {
-        return new Nothing()        
-    }    
+    static of(_) { return new Nothing() }    
     
-    /**
-     * @param {*} _ argument is unnecessary, only for uniformity of interfaces purpose
-     */
+    /** @param {*} _ argument is unnecessary, only for uniformity of interfaces purpose */
     constructor(_) { super(undefined) } 
     
     /**
      * @param {function(*): SMonad} _
      * @returns {Nothing}
-    */
+     */
     chain(_) { return this }
 
     /**
      * @template R
      * @param {function(*): R} _
      * @returns {Nothing}
-    */
+     */
     map(_) { return this }
 
     /**
@@ -612,9 +601,7 @@ class Nothing extends Maybe {
     */
     onNothingChain(func) {
         const res = func();
-        if (!isSMonad(res)) {
-            throw new MonadError('Improper use of "chain" method - function must return SMonad')
-        }
+        panicOnChainViolation(res, 'Nothing.onNothingChain');
         return res
     } 
     
@@ -626,48 +613,30 @@ class Nothing extends Maybe {
     */
     onNothingMap(func) {
         const res = func();
-        if (isSMonad(res)) {
-            throw new MonadError('Improper use of "map" method - function must NOT return SMonad')
-        }
+        panicOnMapViolation(res, 'Nothing.onNothingMap');
         return new Just(res)
     } 
 
-    /**
-     * @template V
-     * @param {SMonad<V>} _
+    /**     
+     * @param {SMonad} _
      * @returns {Nothing}
      * Applies a value enclosed in a container to a function in the container.     
      */
-    ap(_) { return this }
+    ap(_) { return this }    
 
-    /**    
-     * @returns {false}
-     */
-    isRight() { return false }
-
-    /**    
-     * @returns {true}
-     */
+    /** @returns {true} */
     isHalt() { return true }
 
-    /**    
-     * @returns {false}
-     */
+    /** @returns {false} */
     isSuccess() { return false }
 
-    /**    
-     * @returns {false}
-     */
+    /** @returns {false} */
     isFail() { return false }
 
-    /**    
-     * @returns {false}
-     */
+    /** @returns {false} */
     isJust() { return false }
 
-    /**    
-     * @returns {true}
-     */
+    /** @returns {true} */
     isNothing() { return true }
 
     /** 
@@ -677,17 +646,16 @@ class Nothing extends Maybe {
     */
     getOrElse(value) { return value } 
 
-    /**     
-     * @throws {MonadError} No result inside the Nothing container.
-     */
+    /** @throws {MonadError} No result inside the Nothing container */
     result() { throw new MonadError("Cannot extract result from the Nothing container") }
 
     /**
      * @template A
-     * @template R
-     * @param {function(A): R} onJust     
-     * @param {function(): R} onNothing 
-     * @returns {R} 
+     * @template R1
+     * @template R2
+     * @param {function(A): R1} onJust     
+     * @param {function(): R2} onNothing 
+     * @returns {R2} 
      */
     fold(onJust, onNothing) { return onNothing() }
 
@@ -708,9 +676,7 @@ class Effect extends LMonad {
      * @throws {MonadError} Effect requires a function 
      */
     static of(effect) {
-        if (typeof effect !== 'function') {
-            throw new MonadError('Effect requires a function')
-        }
+        panicIfNotFunction(effect, 'static Effect.of'); 
         return new Effect(effect)
     }
 
@@ -718,15 +684,9 @@ class Effect extends LMonad {
      * @param {function(): R} effect
      * @throws {MonadError} Effect requires a function 
      */
-    constructor(effect) {
-        super(undefined)
-        if (typeof effect !== 'function') {
-            throw new MonadError('Effect requires a function')
-        }
-        /**
-         * @type {function(): R}
-         */
-        this._effect = effect
+    constructor(effect) {        
+        panicIfNotFunction(effect, 'Effect.constructor');
+        super(effect);        
     }
 
     /**      
@@ -735,24 +695,16 @@ class Effect extends LMonad {
      * @throws {MonadError} 'Improper use of "chain" method'
      */
     chain(func) {        
-        /**
-         * @type {function(): U}
-         */       
+        /** @type {function(): R} */       
         const effectNew = () => {            
-            let out = this._effect();
-            if (out instanceof Promise) {
-                throw new MonadError('Effect.chain - inner function must NOT return Promise. Use chainAsync instead')
-            }
-            if (isSMonad(out)) {
-                if (out.isHalt?.()) { return out }
-                if (out.isRight?.()) { out = out.result() }
-            }          
-            const resultEff = func(out); 
-            if (!(resultEff instanceof Effect)) {
-                throw new MonadError('Improper use of "chain" method - func must return an Effect')
-            }
-            const result = resultEff._effect()  
-            if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+            let out = this._value();
+            panicOnPromise(out, 'Effect.chain');
+            if (isHaltSMonad(out)) { return out } 
+            if (isRightSMonad(out)) { out = unwrapSMonad(out) }                     
+            const resultEff = func(out);
+            panicOnAnotherInstance.call(this, resultEff, 'Effect.chain');            
+            const result = resultEff._value()  
+            if (isRightSMonad(result)) { return unwrapSMonad(result) } 
             return result     
         }
         return new Effect(effectNew)
@@ -764,22 +716,15 @@ class Effect extends LMonad {
      * @throws {MonadError} 'Improper use of "chainAsync" method'
      */
     chainAsync(asyncFunc) {        
-        /**
-         * @async
-         * @type {function(): Promise<U>}
-         */       
+        /** @type {function(): Promise<R>} */       
         const effectNew = async () => {            
-            let out = await this._effect();                       
-            if (isSMonad(out)) {
-                if (out.isHalt?.()) { return out }
-                if (out.isRight?.()) { out = out.result() }
-            }          
+            let out = await this._value();                       
+            if (isHaltSMonad(out)) { return out } 
+            if (isRightSMonad(out)) { out = unwrapSMonad(out) }             
             const resultEff = await asyncFunc(out); 
-            if (!(resultEff instanceof Effect)) {
-                throw new MonadError('Improper use of "chainAsync" method - func must return an Effect')
-            }
-            const result = await resultEff._effect();          
-            if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+            panicOnAnotherInstance.call(this, resultEff, 'Effect.chainAsync'); 
+            const result = await resultEff._value();          
+            if (isRightSMonad(result)) { return unwrapSMonad(result) } 
             return result     
         }
         return new Effect(effectNew)
@@ -791,26 +736,16 @@ class Effect extends LMonad {
      * @throws {MonadError} 'Improper use of "map" method'
      */
     map(func) {        
-        /**
-         * @type {function(): R}
-         */
+        /** @type {function(): R} */
         const effectNew = () => {
-            let out = this._effect();
-            if (out instanceof Promise) {
-                throw new MonadError('Effect.map - inner function must NOT return Promise. Use mapAsync instead')
-            }
-            if (isSMonad(out)) {
-                if (out.isHalt?.()) { return out }
-                if (out.isRight?.()) { out = out.result() }
-            }          
+            let out = this._value();
+            panicOnPromise(out, 'Effect.map');
+            if (isHaltSMonad(out)) { return out } 
+            if (isRightSMonad(out)) { out = unwrapSMonad(out) }              
             const result = func(out);
-            if (result instanceof Promise) {
-                throw new MonadError('Effect.map - argument function must NOT return Promise. Use mapAsync instead')
-            }                              
-            if (isLMonad(result)) {
-                throw new MonadError('Improper use of "map" method - func must NOT return LMonad')
-            }
-            if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+            panicOnPromise(result, 'Effect.map');
+            panicOnLazyMapViolation(result, 'Effect.map');           
+            if (isRightSMonad(result)) { return unwrapSMonad(result) } 
             return result
         }
         return new Effect(effectNew)
@@ -822,21 +757,14 @@ class Effect extends LMonad {
      * @throws {MonadError} 'Improper use of "mapAsync" method'
      */
     mapAsync(asyncFunc) {        
-        /**
-         * @async
-         * @type {function(): Promise<R>}
-         */
+        /** @type {function(): Promise<R>} */
         const effectNew = async () => {
-            let out = await this._effect();            
-            if (isSMonad(out)) {
-                if (out.isHalt?.()) { return out }
-                if (out.isRight?.()) { out = out.result() }
-            }          
+            let out = await this._value();            
+            if (isHaltSMonad(out)) { return out } 
+            if (isRightSMonad(out)) { out = unwrapSMonad(out) }             
             const result = await asyncFunc(out);                                         
-            if (isLMonad(result)) {
-                throw new MonadError('Improper use of "mapAsync" method - func must NOT return LMonad')
-            }
-            if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+            panicOnLazyMapViolation(result, 'Effect.mapAsync');
+            if (isRightSMonad(result)) { return unwrapSMonad(result) } 
             return result
         }
         return new Effect(effectNew)
@@ -844,36 +772,24 @@ class Effect extends LMonad {
 
     /** 
      * Recover from errors (SYNC)      
-     * @param {function(): R} func
+     * @param {function(): R | Effect} func
      * @returns {Effect<() => R>}
      * @throws {MonadError} 'Improper use of "catch" method'
      */
     catch(func) {
-        /**
-         * @type {function(): R}
-         */
+        /** @type {function(): R} */
         const effectNew = () => {
             try {
-                let out = this._effect();
-                if (out instanceof Promise) {
-                    throw new MonadError('Effect.catch - inner function must NOT return Promise. Use catchAsync instead')
-                }
-                if (isSMonad(out)) {
-                    if (out.isHalt?.()) { return out }
-                    if (out.isRight?.()) { out = out.result() }
-                } 
+                const out = this._value();
+                panicOnPromise(out, 'Effect.catch');                
                 return out
             } catch(err) { 
-                if (err instanceof MonadError) { throw err }        
+                if (isMonadError(err)) { throw err }        
                 const result = func();
-                if (result instanceof Promise) {
-                    throw new MonadError('Effect.catch - argument function must NOT return Promise. Use catchAsync instead')
-                }                              
-                if (isLMonad(result) && (!(result instanceof Effect))) {
-                    throw new MonadError('Improper use of "catch" method - func must return value or Effect')
-                }
-                if (result instanceof Effect) { return result._effect() }
-                if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+                panicOnPromise(result, 'Effect.catch');                            
+                panicOnAnotherLazyMonad.call(this, result, 'Effect.catch');
+                if (result instanceof Effect) { return result._value() }
+                if (isRightSMonad(result)) { return unwrapSMonad(result) } 
                 return result
             }
         }
@@ -882,30 +798,21 @@ class Effect extends LMonad {
 
     /** 
      * Recover from errors (ASYNC)      
-     * @param {function(): R | Promise<R>} func
+     * @param {function(): Promise<R | Effect>} func
      * @returns {Effect<() => R>}
-     * @throws {MonadError} 'Improper use of "catch" method'
+     * @throws {MonadError} 'Improper use of "catchAsync" method'
      */
     catchAsync(func) {
-        /**
-         * @type {function(): R | Promise<R>}
-         */
+        /** @type {function(): Promise<R>} */
         const effectNew = async () => {
             try {
-                let out = await this._effect();                
-                if (isSMonad(out)) {
-                    if (out.isHalt?.()) { return out }
-                    if (out.isRight?.()) { out = out.result() }
-                } 
-                return out
+                return await this._value();              
             } catch(err) { 
-                if (err instanceof MonadError) { throw err }        
+                if (isMonadError(err)) { throw err }        
                 const result = await func();                                             
-                if (isLMonad(result) && (!(result instanceof Effect))) {
-                    throw new MonadError('Improper use of "catch" method - func must return value or Effect')
-                }
-                if (result instanceof Effect) { return await result._effect() }
-                if (isSMonad(result) && result.isRight?.()) { return result.result() } 
+                panicOnAnotherLazyMonad.call(this, result, 'Effect.catchAsync');
+                if (result instanceof Effect) { return await result._value() }
+                if (isRightSMonad(result)) { return unwrapSMonad(result) } 
                 return result
             }
         }
@@ -917,18 +824,14 @@ class Effect extends LMonad {
      * @throws {MonadError}
      */
     run() {
-        const result = this._effect();
-        if (result instanceof Promise) {
-            throw new MonadError('Effect.run - inner function must NOT return Promise. Use runAsync instead. ')
-        }
+        const result = this._value();
+        panicOnPromise(result, 'Effect.run');
         return result
     }
 
-    /**       
-     * @returns {Promise<R>}
-     */
+    /** @returns {Promise<R>} */
     async runAsync() {
-        return await this._effect()
+        return await this._value()
     }
 
     /**
@@ -943,21 +846,12 @@ class Effect extends LMonad {
      * @throws {MonadError} Effect - wrong type of the result or improper use of fold method.  
      */
     fold(handlers) {
-        let {onRight, onHalt, onValue} = handlers;
-        if (!onRight) { onRight = identical }
-        if (!onHalt) { onHalt = identical }        
-        if (!onValue) { onValue = identical }
-        const res = this._effect();
-        if (res instanceof Promise) {
-            throw new MonadError('Effect.fold - inner function must NOT return Promise. Use foldAsync instead. ')   
-        }
-        if (isSMonad(res)) {
-            return res.fold(onRight, onHalt)
-        } else if (isLMonad(res)) { 
-            throw new MonadError(`Effect - wrong type of the result: ${res}`)    
-        } else {
-            return onValue(res)
-        }
+        let { onRight = identical, onHalt = identical, onValue = identical } = handlers;
+        const res = this._value();
+        panicOnPromise(res, 'Effect.fold');
+        panicOnLazyMapViolation(res, 'Effect.fold');
+        if (isSMonad(res)) { return res.fold(onRight, onHalt) }
+        else { return onValue(res) }
     }
 
     /**
@@ -973,18 +867,11 @@ class Effect extends LMonad {
      * @throws {MonadError} Effect - wrong type of the result    
      */
     async foldAsync(handlers) {
-        let {onRight, onHalt, onValue} = handlers;
-        if (!onRight) { onRight = identical }
-        if (!onHalt) { onHalt = identical }        
-        if (!onValue) { onValue = identical }
-        const res = await this._effect()
-        if (isSMonad(res)) {
-            return await res.fold(onRight, onHalt)
-        } else if (isLMonad(res)) { 
-            throw new MonadError(`Effect - wrong type of the result: ${res}`)    
-        } else {
-            return await onValue(res)
-        }
+        let { onRight = identical, onHalt = identical, onValue = identical } = handlers;
+        const res = await this._value();
+        panicOnLazyMapViolation(res, 'Effect.foldAsync');
+        if (isSMonad(res)) { return await res.fold(onRight, onHalt) }
+        else { return await onValue(res) }
     }
 
     /**    
@@ -992,11 +879,9 @@ class Effect extends LMonad {
      * @param {V} val   
      * @returns {Effect<F>}     
      */
-    static pure(val) {        
-        return new Effect(() => val)
-    }
+    static pure(val) { return new Effect(() => val) }
 
-    toString() { return `Effect(${this._effect})`}
+    toString() { return `Effect(${this._value})`}
 }
 
 
@@ -1018,9 +903,7 @@ class State extends LMonad {
      * @throws {MonadError} State requires a function  
      */
     static of(runState) {
-        if (typeof runState !== 'function') {
-            throw new MonadError('State requires a function')
-        }
+        panicIfNotFunction(runState, 'static State.of'); 
         return new State(runState)
     }
 
@@ -1031,15 +914,9 @@ class State extends LMonad {
      * @returns {State<function(S): [V, S]>}
      * @throws {MonadError} State requires a function      
      */
-    constructor(runState) {
-        super(undefined)
-        if (typeof runState !== 'function') {
-            throw new MonadError('State requires a function')
-        }
-        /**
-         * @type {function(S): [V, S] | Promise<[V, S]}
-         */
-        this._run = runState;
+    constructor(runState) {        
+        panicIfNotFunction(runState, 'State.constructor'); 
+        super(runState);        
         this._iterStore = [];
     }
 
@@ -1051,16 +928,12 @@ class State extends LMonad {
      */
     chain(func) {
         const newRun = (state) => {
-            const initial = this._run(state);
-            if (initial instanceof Promise) {
-                throw new MonadError('State.chain - inner function must NOT return Promise. Use chainAsync instead')    
-            }
+            const initial = this._value(state);
+            panicOnPromise(initial, 'State.chain');
             const [val, firstState] = initial;
             const stateMonad = func(val);
-            if (!(stateMonad instanceof State)) {
-                throw new MonadError('Improper use of "chain" method - func must return a State')
-            }
-            return stateMonad._run(firstState)
+            panicOnAnotherInstance.call(this, stateMonad, 'State.chain'); 
+            return stateMonad._value(firstState)
         }
         return new State(newRun)
     }
@@ -1073,13 +946,11 @@ class State extends LMonad {
      */
     chainAsync(func) {
         const newRun = async (state) => {
-            const initial = await this._run(state);            
+            const initial = await this._value(state);            
             const [val, firstState] = initial;
             const stateMonad = await func(val);
-            if (!(stateMonad instanceof State)) {
-                throw new MonadError('Improper use of "chain" method - func must return a State')
-            }
-            return await stateMonad._run(firstState)
+            panicOnAnotherInstance.call(this, stateMonad, 'State.chainAsync'); 
+            return await stateMonad._value(firstState)
         }
         return new State(newRun)
     }
@@ -1092,18 +963,12 @@ class State extends LMonad {
      */
     map(func) {
         const newRun = (state) => {
-            const initial = this._run(state);
-            if (initial instanceof Promise) {
-                throw new MonadError('State.map - inner function must NOT return Promise. Use mapAsync instead')    
-            }
+            const initial = this._value(state);
+            panicOnPromise(initial, 'State.map');
             const [val, firstState] = initial;
             const newVal = func(val);
-            if (newVal instanceof Promise) {
-                throw new MonadError('State.map - function must NOT return Promise. Use mapAsync instead')    
-            }
-            if (isLMonad(newVal) || isSMonad(newVal)) {
-                throw new MonadError('Improper use of "map" method - func must NOT return a Monad')
-            }
+            panicOnPromise(newVal, 'State.map');
+            panicOnLazyMapViolation(newVal, 'State.map');
             return [newVal, firstState]
         }
         return new State(newRun)
@@ -1117,12 +982,10 @@ class State extends LMonad {
      */
     mapAsync(func) {
         const newRun = async (state) => {
-            const initial = await this._run(state);            
+            const initial = await this._value(state);            
             const [val, firstState] = initial;
             const newVal = await func(val);            
-            if (isLMonad(newVal) || isSMonad(newVal)) {
-                throw new MonadError('Improper use of "map" method - func must NOT return a Monad')
-            }
+            panicOnLazyMapViolation(newVal, 'State.mapAsync');
             return [newVal, firstState]
         }
         return new State(newRun)
@@ -1139,21 +1002,15 @@ class State extends LMonad {
     catch(func) {        
         const newRun = (state) => {            
             try {
-                const initial = this._run(state);
-                if (initial instanceof Promise) {
-                    throw new MonadError('State.catch - inner function must NOT return Promise. Use catchAsync instead')    
-                }                             
+                const initial = this._value(state);
+                panicOnPromise(initial, 'State.catch');                             
                 return initial
             } catch(err) { 
-                if (err instanceof MonadError) { throw err }        
+                if (isMonadError(err)) { throw err }        
                 const result = func(state);
-                if (result instanceof Promise) {
-                    throw new MonadError('State.catch - argument function must NOT return Promise. Use catchAsync instead')
-                }                              
-                if (isLMonad(result) && (!(result instanceof State))) {
-                    throw new MonadError('Improper use of "catch" method - func must return value or State')
-                }
-                return (result instanceof State) ? result._run(state) : result               
+                panicOnPromise(result, 'State.catch');                             
+                panicOnAnotherLazyMonad.call(this, result, 'State.catch');
+                return (result instanceof State) ? result._value(state) : result               
             }
         }
         return new State(newRun)    
@@ -1170,14 +1027,12 @@ class State extends LMonad {
     catchAsync(func) {
         const newRun = async (state) => {            
             try {                
-                return await this._run(state);               
+                return await this._value(state);               
             } catch(err) { 
-                if (err instanceof MonadError) { throw err }        
+                if (isMonadError(err)) { throw err }        
                 const result = await func(state);                                                          
-                if (isLMonad(result) && (!(result instanceof State))) {
-                    throw new MonadError('Improper use of "catchAsync" method - func must return value or State')
-                }
-                return (result instanceof State) ? await result._run(state) : result               
+                panicOnAnotherLazyMonad.call(this, result, 'State.catchAsync');
+                return (result instanceof State) ? await result._value(state) : result               
             }
         }
         return new State(newRun)    
@@ -1190,10 +1045,8 @@ class State extends LMonad {
      * @returns {[V,S]}
      */
     run(state) {
-        const result = this._run(state);
-        if (result instanceof Promise) {
-            throw new MonadError('State.run - inner function must NOT return Promise. Use runAsync instead')    
-        }
+        const result = this._value(state);
+        panicOnPromise(result, 'State.run');
         return result
     }
 
@@ -1204,9 +1057,7 @@ class State extends LMonad {
      * @param {S} state    
      * @returns {Promise<[V,S]>}
      */
-    async runAsync(state) {        
-        return await this._run(state)
-    }
+    async runAsync(state) { return await this._value(state) }
 
     /**    
      * @template V 
@@ -1216,10 +1067,8 @@ class State extends LMonad {
      * The same as run. Made for interface uniformity with Effect monad 
      */
     fold(state) {
-        const result = this._run(state);
-        if (result instanceof Promise) {
-            throw new MonadError('State.fold - inner function must NOT return Promise. Use foldAsync instead')    
-        }
+        const result = this._value(state);
+        panicOnPromise(result, 'State.fold');
         return result
     }
     
@@ -1231,16 +1080,14 @@ class State extends LMonad {
      * @returns {Promise<[V,S]>}
      * The same as runAsync. Made for interface uniformity with Effect monad 
      */
-    async foldAsync(state) {
-        return await this._run(state)
-    } 
+    async foldAsync(state) { return await this._value(state) } 
     
-    toString() { return `State(${this._run})`}
+    toString() { return `State(${this._value})`}
 
     /**
      * @template V 
      * @param {function(V): State<F>} func 
-     * @returns {void}
+     * @returns {void}   
      * Stores functions in an array for execution through flat iteration.
      * It can be useful for very long chains to avoid possible stack overflows. 
      * !!!-MATTER-!!!: returns the same monad - folding functions into its current structure.
@@ -1251,7 +1098,7 @@ class State extends LMonad {
     /**
      * @template V 
      * @param {function(V): V} func 
-     * @returns {void}
+     * @returns {void} 
      * Stores functions in an array for execution through flat iteration.
      * It can be useful for very long chains to avoid possible stack overflows.  
      * !!!-MATTER-!!!: returns the same monad - folding functions into its current structure.
@@ -1271,23 +1118,17 @@ class State extends LMonad {
      */
     runIter(state, clear=true) {
         try {
-            const initial = this._run(state);
-            if (initial instanceof Promise) {
-                throw new MonadError('State.runIter - inner function must NOT return Promise.')    
-            }            
+            const initial = this._value(state);
+            panicOnPromise(initial, 'State.runIter');           
             let [val, newState] = initial;
             for(const [func, method] of this._iterStore) {
                 if (method === CHAIN_MTD) {
                     const stateMonad = func(val);
-                    if (!(stateMonad instanceof State)) {
-                        throw new MonadError('Improper use of "chainIter" - func must return a State')
-                    }
-                    [val, newState] =  stateMonad._run(newState);
+                    panicOnAnotherInstance.call(this, stateMonad, 'State.runIter');
+                    [val, newState] =  stateMonad._value(newState);
                 } else if (method === MAP_MTD) {
                     val = func(val);
-                    if (isLMonad(val) || isSMonad(val)) {
-                        throw new MonadError('Improper use of "mapIter" - func must NOT return a Monad')
-                    }                
+                    panicOnLazyMapViolation(val, 'State.runIter');               
                 }
             }
             return [val, newState]
@@ -1301,25 +1142,17 @@ class State extends LMonad {
      * @param {V} val   
      * @returns {State<F>}     
      */
-    static pure(val) {        
-        return new State(state => [val, state])
-    }
+    static pure(val) { return new State(state => [val, state]) }
     
-    /**         
-     * @returns {State<function(S): [S, S]>}     
-     */
-    static get() {       
-        return new State(state => [state, state])
-    }
+    /** @returns {State<function(S): [S, S]>} */
+    static get() { return new State(state => [state, state]) }
     
     /** 
      * @template S     
      * @param {S} newState     
      * @returns {State<function(S): [null, S]>}     
      */
-    static put(newState) {        
-        return new State(_ => [null, newState])
-    }
+    static put(newState) { return new State(_ => [null, newState]) }
 }
 
 
