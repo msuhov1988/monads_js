@@ -42,7 +42,7 @@ Main methods for Success/Fail::
 - For identification: `isRight(), isHalt(), isSuccess(), isFail()`
 - For unification with Maybe(return false here): `isJust(), isNothing()`
 - Either can be created with `Either.try(fn)`: wraps a synchronous function, always returns Success or Fail.
-- Violating the contract of methods like `chain`, `map`, or `ap` throws a `MonadError`.
+- Violating the contract of methods throws a `MonadError`.
 
 ### Maybe (Just/Nothing)
 
@@ -60,7 +60,7 @@ Main methods for Just/Nothing are the same as Success/Fail:
 You can turn a value into Maybe via `Maybe.fromNullable(val, [isNullPredicate])`:
 - `null` and `undefined` are always considered empty
 - Predicate allows fine-tuning of what else should be considered empty
-- Violating the contract of methods like `chain`, `map`, or `ap` throws a `MonadError`.
+- Violating the contract of methods throws a `MonadError`.
 
 ## Lazy Monads: Effect and State
 
@@ -69,7 +69,9 @@ You can turn a value into Maybe via `Maybe.fromNullable(val, [isNullPredicate])`
 - Wraps side-effecting functions (like () => someEffect) — does not run immediately
 - Invoked via `run()` (for sync) or `runAsync()` (for async chains).
 - Supports `chain, chainAsync, map, mapAsync`.
-- Throws `MonadError` on contract violation.
+- `catch, catchAsync` - error handlers, which can be placed at any position within a synchronous or asynchronous chain, respectively.
+   The functions passed to these methods may return either regular values or lazy monads of the same type.
+- Throws `MonadError` on contract violation. Errors of this kind are not intercepted by the `catch` or `catchAsync` methods.
 
 Features:
 - In chains, you can return not only simple values but also simple monads (Success/Fail/Just/Nothing).
@@ -84,6 +86,19 @@ const eff = Effect.of(() => Success.of(5))
 .chain(x => Effect.of(() => x * 2));
 console.log(eff.run()); // 16
 ```
+#### Catching errors example:
+```
+const eff = Effect.of(async () => await 0)
+    .mapAsync(async _ => { throw new TypeError() })
+    .catchAsync(async () => await 1)
+    .chainAsync(async x => await Effect.of(() => x + 1))
+    .mapAsync(async _ => { let x = undefined; x[0] = 0; return x })
+    .catchAsync(async () => await Effect.of(() => -10))                
+    .chainAsync(async x => await Effect.of(_ => x + 1))
+    .catchAsync(async () => await -20) // has no effect
+const res = await eff.runAsync(); // -9
+```
+
 
 ### State
 
@@ -91,17 +106,33 @@ A monadic container for computations with hidden state.
 
 - Holds a function: state0 => [value, state1]
 - Main methods: `chain, chainAsync, map, mapAsync, fold, foldAsync, run, runAsync`
+- `fold, foldAsync` the same as `run, runAsync` here. Made for interface uniformity.
 - Methods `mapIter, chainIter, runIter` let you build large chains and execute them with a simple loop.
 - IMPORTANT: mapIter, chainIter do not return new monads but mutate the current one in place!
 - BUT this ...Iter mutability is strictly restricted to the current instance. When the standard (classic) methods are called, the structure itself is not duplicated or propagated to new monad instances.
+- `catch, catchAsync` - error handlers, which can be placed at any position within a synchronous or asynchronous chain, respectively.
+   The functions passed to these methods may return either regular values or lazy monads of the same type.
+- Throws `MonadError` on contract violation. Errors of this kind are not intercepted by the `catch` or `catchAsync` methods.
 
-Example:
+#### Example:
 ```
 const st = State.pure(0)
 .map(x => x + 1)
 .chain(x => State.of(s => [x + 2, s * 10]))
 const [v, newState] = st.run(1); // v === 3, newState === 10
 ```
+#### Catching errors example:
+```
+const st = State.of(async s => await [s + 10, s + 10])
+    .mapAsync(async _ => { throw new TypeError() })
+    .catchAsync(async s => await [s + 100, s + 100])
+    .chainAsync(async x => await State.of(s => [x + 10, s + 10]))
+    .mapAsync(async _ => { let x = undefined; x[0] = 0; return x })
+    .catchAsync(s => State.of(_ => [s, s]))
+    .chainAsync(async x => await State.of(s => [x + 1, s + 1]))
+const res = await st.runAsync(-10); // -9
+```
+
 
 ## Unified interface for simple monads
 
@@ -115,7 +146,6 @@ Maybe.fromNullable(someValue)
 .onNothingChain(() => Success.of(100)) // Switch from Maybe to Either
 .onFailChain(err => Just.of(123)) // Reverse
 ```
-
 
 ## Mixing Effect and simple monads
 
