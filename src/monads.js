@@ -788,7 +788,7 @@ class Effect extends LMonad {
                 const result = func();
                 panicOnPromise(result, 'Effect.catch');                            
                 panicOnAnotherLazyMonad.call(this, result, 'Effect.catch');
-                if (result instanceof Effect) { return result._value() }
+                if (result instanceof this.constructor) { return result._value() }
                 if (isRightSMonad(result)) { return unwrapSMonad(result) } 
                 return result
             }
@@ -811,7 +811,7 @@ class Effect extends LMonad {
                 if (isMonadError(err)) { throw err }        
                 const result = await func();                                             
                 panicOnAnotherLazyMonad.call(this, result, 'Effect.catchAsync');
-                if (result instanceof Effect) { return await result._value() }
+                if (result instanceof this.constructor) { return await result._value() }
                 if (isRightSMonad(result)) { return unwrapSMonad(result) } 
                 return result
             }
@@ -1010,7 +1010,7 @@ class State extends LMonad {
                 const result = func(state);
                 panicOnPromise(result, 'State.catch');                             
                 panicOnAnotherLazyMonad.call(this, result, 'State.catch');
-                return (result instanceof State) ? result._value(state) : result               
+                return (result instanceof this.constructor) ? result._value(state) : result               
             }
         }
         return new State(newRun)    
@@ -1032,7 +1032,7 @@ class State extends LMonad {
                 if (isMonadError(err)) { throw err }        
                 const result = await func(state);                                                          
                 panicOnAnotherLazyMonad.call(this, result, 'State.catchAsync');
-                return (result instanceof State) ? await result._value(state) : result               
+                return (result instanceof this.constructor) ? await result._value(state) : result               
             }
         }
         return new State(newRun)    
