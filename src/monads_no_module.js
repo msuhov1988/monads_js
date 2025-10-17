@@ -1110,7 +1110,8 @@ class State extends LMonad {
     /**    
      * @template V 
      * @template S 
-     * @param {S} state    
+     * @param {S} state  
+     * @param {boolean} clear if true - clear iteration structure after execution. DEFAULT true.   
      * @returns {[V,S]}
      * @throws {MonadError} Improper use of chainIter and mapIter methods
      * First, it runs the standard run() method.
