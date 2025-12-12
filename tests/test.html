@@ -366,6 +366,13 @@ describe('Monad Tests (complete)', function() {
                 .chainAsync(async x => await Effect.of(_ => x + 1))
             const eff14Res = await eff14.runAsync();            
             assert.strictEqual(eff14Res.isNothing(), true);
+
+            const eff15 = Effect.of(() => { throw new TypeError() })
+                .mapAsync(async resp => await resp.json())
+                .mapAsync(async data => data * 10)
+                .catchAsync(err => err instanceof TypeError)
+            const eff15Res = await eff15.runAsync();
+            assert.strictEqual(eff15Res, true);
             
             (async () => {
                 try {

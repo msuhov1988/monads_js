@@ -772,8 +772,10 @@ class Effect extends LMonad {
     }
 
     /** 
-     * Recover from errors (SYNC)      
-     * @param {function(): R | Effect} func
+     * Recover from errors (SYNC)
+     * @template E - type of error object
+     * @template R - type of non-monadic result        
+     * @param {function(E): R | Effect<F>} func
      * @returns {Effect<() => R>}
      * @throws {MonadError} 'Improper use of "catch" method'
      */
@@ -786,7 +788,7 @@ class Effect extends LMonad {
                 return out
             } catch(err) { 
                 if (isMonadError(err)) { throw err }        
-                const result = func();
+                const result = func(err);
                 panicOnPromise(result, 'Effect.catch');                            
                 panicOnAnotherLazyMonad.call(this, result, 'Effect.catch');
                 if (result instanceof this.constructor) { return result._value() }
@@ -798,8 +800,10 @@ class Effect extends LMonad {
     }
 
     /** 
-     * Recover from errors (ASYNC)      
-     * @param {function(): Promise<R | Effect>} func
+     * Recover from errors (ASYNC)
+     * @template E - type of error object
+     * @template R - type of non-monadic result       
+     * @param {function(E): Promise<R | Effect<F>>} func
      * @returns {Effect<() => R>}
      * @throws {MonadError} 'Improper use of "catchAsync" method'
      */
@@ -810,7 +814,7 @@ class Effect extends LMonad {
                 return await this._value();              
             } catch(err) { 
                 if (isMonadError(err)) { throw err }        
-                const result = await func();                                             
+                const result = await func(err);                                             
                 panicOnAnotherLazyMonad.call(this, result, 'Effect.catchAsync');
                 if (result instanceof this.constructor) { return await result._value() }
                 if (isRightSMonad(result)) { return unwrapSMonad(result) } 
