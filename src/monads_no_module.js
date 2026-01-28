@@ -111,8 +111,8 @@ function panicOnChainViolation(value, method) {
  * @throws {MonadError} - throws if value is Monad entity. Method for concrete definition.
  */
 function panicOnMapViolation(value, method) {
-    if (isMonad(value)) {
-        throw new MonadError(`${method} - improper use, applicable value must NOT be Monad`)
+    if (isSMonad(value)) {
+        throw new MonadError(`${method} - improper use, applicable value must NOT be SMonad`)
     } 
 }
 

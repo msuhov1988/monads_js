@@ -94,6 +94,13 @@ describe('Monad Tests (complete)', function() {
                 .onNothingChain(_ => new Success("bye"))
                 .fold(x => assert.strictEqual(x, 4), x => assert.fail());
         });
+        it('lazy monads in simple monads chains', function() {
+            Success.of(0)
+                .map(x => Effect.of(() => x + 1))
+                .map(effect => effect.map(x => x * 2))
+                .map(effect => effect.chain(x => Effect.of(() => x * 10)))
+                .fold(effect => assert.strictEqual(effect.run(), 20), _ => assert.fail());
+        });
     });
 
     describe('Fail', function() {
@@ -122,6 +129,13 @@ describe('Monad Tests (complete)', function() {
 
         it('fallback value from Fail', function() {
             assert.strictEqual(Fail.of("error").getOrElse(1), 1);
+        });
+        it('lazy monads in simple monads chains', function() {
+            Fail.of('Some error')
+                .map(x => Effect.of(() => x + 1))
+                .map(effect => effect.map(x => x * 2))
+                .map(effect => effect.chain(x => Effect.of(() => x * 10)))
+                .fold(_ => assert.fail(), x => assert.strictEqual(x, "Some error"));
         });
     });
 
@@ -549,8 +563,7 @@ describe('Monad Tests (complete)', function() {
         it('throws on bad usage: chain/map/result', function(done) {
             assert.throws(() => Success.of(1).chain(x => x).result(), MonadError);
             assert.throws(() => Success.of(1).chain(x => Effect.pure(0)).result(), MonadError);
-            assert.throws(() => Just.of("e").map(_ => Nothing.of()).getOrElse(10), MonadError);
-            assert.throws(() => Just.of("e").map(_ => State.pure(0)).getOrElse(10), MonadError);
+            assert.throws(() => Just.of("e").map(_ => Nothing.of()).getOrElse(10), MonadError);           
             assert.throws(() => Fail.of("e").result(), MonadError);
             assert.throws(() => Nothing.of("e").result(), MonadError);
             assert.throws(() => Effect.of(() => 10).chain(x => x).run(), MonadError);
